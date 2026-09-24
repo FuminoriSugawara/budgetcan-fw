@@ -302,20 +302,12 @@ void task_queue_to_host(void *argument)
   { 
     /* Check the queue to see if we have data TO the host to handle */
     if (xQueueReceive(hGS_CAN.queue_to_hostHandle, &frame_object.frame, portMAX_DELAY) == pdPASS) {
-      if (USBD_GS_CAN_SendFrame(&hUSB, &frame_object.frame) == USBD_OK) {
-        can_on_rx_cb(frame_object.frame.channel, &frame_object.frame);
+      /* Retain this frame while USB is busy. Requeueing can lose it if
+       * an ISR fills the queue between the dequeue and the retry. */
+      while (USBD_GS_CAN_SendFrame(&hUSB, &frame_object.frame) != USBD_OK) {
+        taskYIELD();
       }
-      else {
-        /* throw the message back onto the queue */
-        if (uxQueueSpacesAvailable(hGS_CAN.queue_to_hostHandle) == 0) {
-          /* the pipe to the host is full - delay longer to allow for catchup if needed */
-          vTaskDelay(pdMS_TO_TICKS(10));
-        }
-        else {
-          xQueueSendToFront(hGS_CAN.queue_to_hostHandle, &frame_object.frame, 0);
-          vTaskDelay(pdMS_TO_TICKS(0));
-        }
-      }
+      can_on_rx_cb(frame_object.frame.channel, &frame_object.frame);
     }
   }
 }

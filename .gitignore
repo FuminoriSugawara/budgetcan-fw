@@ -15,3 +15,6 @@
 compile_commands.json
 /Debug*/
 /DEBUG_budgetcan_g0_fw/
+
+# Keep local hardware connection and validation records out of Git.
+/docs/validation/

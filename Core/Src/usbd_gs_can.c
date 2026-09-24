@@ -625,50 +625,37 @@ uint8_t USBD_GS_CAN_GetChannelNumber(USBD_HandleTypeDef *pdev, CAN_HANDLE_TYPEDE
 
 uint8_t USBD_GS_CAN_SendFrame(USBD_HandleTypeDef *pdev, struct gs_host_frame *frame)
 {
+	/* Only task_queue_to_host calls this function. Keep the USB transfer's
+	 * storage alive and unchanged until DataIn clears TxState. */
 	static uint8_t buf[GS_HOST_FRAME_SIZE];
-	uint8_t *send_addr;
-
 	USBD_GS_CAN_HandleTypeDef *hcan = (USBD_GS_CAN_HandleTypeDef*)pdev->pClassData;
-	size_t len = 0;
 
-  #if defined (CANFD_FEATURE_ENABLED)
-	if (frame->flags & GS_CAN_FLAG_FD) {
-		len = GS_HOST_FRAME_SIZE;
+	if (hcan->TxState != 0) {
+		return USBD_BUSY;
 	}
-	else {
+
+	size_t len = GS_HOST_FRAME_SIZE;
+#if defined(CANFD_FEATURE_ENABLED)
+	if (!(frame->flags & GS_CAN_FLAG_FD)) {
 		len = GS_HOST_CLASSIC_FRAME_SIZE;
 	}
-  #else
-	len = GS_HOST_FRAME_SIZE;
-  #endif
-
+#endif
 	if (!hcan->timestamps_enabled) {
 		len -= 4;
 	}
 
-	send_addr = (uint8_t *)frame;
-
+	memcpy(buf, frame, len);
 	if (hcan->pad_pkts_to_max_pkt_size) {
-		// When talking to WinUSB it seems to help a lot if the
-		// size of packet you send equals the max packet size.
-		// In this mode, fill packets out to max packet size and
-		// then send.
-		memcpy(buf, frame, len);
-
-		// zero rest of buffer
 		memset(buf + len, 0, sizeof(buf) - len);
-		send_addr = buf;
 		len = sizeof(buf);
 	}
 
-	if (hcan->TxState == 0) {
-		hcan->TxState = 1;
-		USBD_LL_Transmit(pdev, GSUSB_ENDPOINT_IN, send_addr, len);
-		return USBD_OK;
+	hcan->TxState = 1;
+	if (USBD_LL_Transmit(pdev, GSUSB_ENDPOINT_IN, buf, len) != USBD_OK) {
+		hcan->TxState = 0;
+		return USBD_FAIL;
 	}
-	else {
-		return USBD_BUSY;
-	}
+	return USBD_OK;
 }
 
 bool USBD_GS_CAN_CustomDeviceRequest(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req)
